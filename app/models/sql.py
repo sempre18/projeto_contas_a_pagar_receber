@@ -1,8 +1,25 @@
-from sqlalchemy import create_engine, String, Float, Column, Date
-from sqlalchemy.orm import sessionmaker, declarative_base
-from config.config import BANCO_DADOS_NAME
+import sys
+from pathlib import Path
 
-db = create_engine(f"sqlite:///{BANCO_DADOS_NAME}")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import hashlib
+
+import pandas as pd
+from sqlalchemy import create_engine, String, Float, Column, Date, Integer
+from sqlalchemy import func
+from sqlalchemy.orm import sessionmaker, declarative_base
+from config.config import (
+    BANCO_DADOS_NAME,
+    PROJECT_DIR,
+    COLUNAS_DESPESA,
+    COLUNAS_RECEBIMENTO,
+)
+
+PASTA_DB = PROJECT_DIR / "database"
+PASTA_DB.mkdir(exist_ok=True)
+
+db = create_engine(f"sqlite:///{str(PASTA_DB / BANCO_DADOS_NAME)}")
 Session = sessionmaker(bind=db)
 Session = Session()
 
@@ -14,10 +31,11 @@ Base = declarative_base()
 # ==========================================
 # emissao, documento, historico, vencimento, vl. documento, pagamento, valor pago, por, descriçao portador,
 # cod.c. custo, conta centro de custo, descricao centro de custo, cod. setor, descricao do setor, observ #1, observ #2, observ #3
-class Recebimento:
+class Recebimento(Base):
     __tablename__ = "recebimentos"
 
     id = Column("id", Integer, primary_key=True, autoincrement=True)
+    _hash = Column("_hash", String, unique=True, index=True)
     emissao = Column("emissao", Date)
     documento = Column("documento", String)
     historico = Column("historico", String)
@@ -79,10 +97,11 @@ class Recebimento:
 # num_bancario, observação_1, valor_juros, avisos, nome_vendedor, c_cli, cnpj_cliente, telefone_cliente, data_cob, obs_dani, comissao_paga
 
 
-class Despesa:
+class Despesa(Base):
     __tablename__ = "despesas"
 
     id = Column("id", Integer, primary_key=True, autoincrement=True)
+    _hash = Column("_hash", String, unique=True, index=True)
     sis = Column("sis", String)
     emissao = Column("emissao", Date)
     documento = Column("documento", String)
@@ -153,3 +172,113 @@ class Despesa:
         self.data_cob = data_cob
         self.obs_dani = obs_dani
         self.comissao_paga = comissao_paga
+
+
+Base.metadata.create_all(bind=db)
+
+
+def data_maxima_atualizada():
+    data_receb = Session.query(func.max(Recebimento.emissao)).scalar()
+    data_desp = Session.query(func.max(Despesa.emissao)).scalar()
+    datas = [d for d in (data_receb, data_desp) if d is not None]
+    return max(datas) if datas else None
+
+
+# ==========================================
+#       IMPORTAÇÃO DE ARQUIVOS .XLSX
+# ==========================================
+
+TABELA_CONFIG = {
+    "COBRANÇA": {
+        "model": Despesa,
+        "colunas_map": COLUNAS_DESPESA,
+        "colunas": list(dict.fromkeys(COLUNAS_DESPESA.values())),
+        "colunas_data": ["emissao", "vencimento", "pagamento"],
+        "colunas_float": ["valor", "valor_pago", "desconto", "valor_juros"],
+    },
+    "PROJEÇÃO": {
+        "model": Recebimento,
+        "colunas_map": COLUNAS_RECEBIMENTO,
+        "colunas": list(dict.fromkeys(COLUNAS_RECEBIMENTO.values())),
+        "colunas_data": ["emissao", "vencimento"],
+        "colunas_float": ["vl_documento", "valor_pago"],
+    },
+}
+
+
+def _hash_linha(valores):
+    """Hash estável de uma linha (mesmos valores em todas as colunas -> mesmo hash), usado para não importar a mesma linha duas vezes."""
+    texto = "|".join("" if v is None or pd.isna(v) else str(v) for v in valores)
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
+
+
+def _hashes_existentes(model_class):
+    return {h for (h,) in Session.query(model_class._hash).all()}
+
+
+def _importar_dataframe(model_class, df, colunas):
+    df = df.copy()
+    total_arquivo = len(df)
+    df["_hash"] = df[colunas].apply(lambda linha: _hash_linha(linha.tolist()), axis=1)
+    df = df.drop_duplicates(
+        subset="_hash"
+    )  # linhas idênticas dentro do próprio arquivo
+
+    existentes = _hashes_existentes(model_class)
+    novas = df[~df["_hash"].isin(existentes)]
+
+    if len(novas) > 0:
+        Session.bulk_insert_mappings(
+            model_class,
+            novas[colunas + ["_hash"]].to_dict("records"),
+            render_nulls=True,  # sem isso, colunas None na 1a linha do lote somem do INSERT inteiro
+        )
+        Session.commit()
+
+    return {
+        "total_arquivo": total_arquivo,
+        "novas": len(novas),
+        "duplicadas": total_arquivo - len(novas),
+    }
+
+
+def importar_arquivo(arquivo, caminho):
+
+    config = TABELA_CONFIG.get(arquivo)
+    if config is None:
+        raise ValueError(
+            f"Tabela desconhecida: {arquivo!r}. Esperado um de {list(TABELA_CONFIG)}"
+        )
+
+    mapa_colunas = config["colunas_map"]
+    colunas = config["colunas"]
+
+    xls = pd.ExcelFile(caminho)
+    partes = []
+    for aba in xls.sheet_names:
+        df_aba = pd.read_excel(xls, sheet_name=aba)
+        colunas_presentes = [c for c in df_aba.columns if c in mapa_colunas]
+        if not colunas_presentes:
+            continue
+        df_aba = df_aba[colunas_presentes].rename(columns=mapa_colunas)
+        partes.append(df_aba.reindex(columns=colunas))
+
+    if not partes:
+        raise ValueError(
+            f"Nenhuma aba de '{caminho}' bate com o formato esperado de '{arquivo}'."
+        )
+
+    df = pd.concat(partes, ignore_index=True)
+
+    for coluna in config["colunas_data"]:
+        df[coluna] = pd.to_datetime(df[coluna], errors="coerce")
+        df[coluna] = df[coluna].apply(lambda v: v.date() if pd.notna(v) else None)
+    for coluna in config["colunas_float"]:
+        df[coluna] = pd.to_numeric(df[coluna], errors="coerce")
+    df = df.where(pd.notnull(df), None)
+
+    return _importar_dataframe(config["model"], df, colunas)
+
+
+if __name__ == "__main__":
+    pass

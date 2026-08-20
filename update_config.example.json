@@ -1,0 +1,8 @@
+{
+  "owner": "seu-usuario-ou-org",
+  "repo": "seu-repositorio",
+  "token": "github_pat_xxxxxxxxxxxxxxxxxxxxx",
+  "current_version": "1.0.0",
+  "exe_name": "RecebimentosDespesas.exe",
+  "asset_suffix": ".exe"
+}

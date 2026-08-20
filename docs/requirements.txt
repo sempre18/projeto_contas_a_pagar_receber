@@ -2,3 +2,5 @@
 pandas
 tkcalendar
 sqlalchemy
+openpyxl
+requests

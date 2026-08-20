@@ -1,0 +1,15 @@
+# ambiente virtual
+.venv/
+
+# python
+__pycache__/
+*.pyc
+
+# banco de dados local
+app/database/*.db
+
+# config da auto-atualizaçao (contem token real)
+update_config.json
+
+# planilhas geradas na hora de testar
+teste_*.xlsx
