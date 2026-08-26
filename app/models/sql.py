@@ -242,8 +242,29 @@ def _importar_dataframe(model_class, df, colunas):
     }
 
 
-def importar_arquivo(arquivo, caminho):
+def listar_abas_compativeis(arquivo, caminho):
+    """Lista as abas de `caminho` cujas colunas batem com o formato esperado de `arquivo` (um valor de TABELAS)."""
+    config = TABELA_CONFIG.get(arquivo)
+    if config is None:
+        raise ValueError(
+            f"Tabela desconhecida: {arquivo!r}. Esperado um de {list(TABELA_CONFIG)}"
+        )
+    mapa_colunas = config["colunas_map"]
 
+    xls = pd.ExcelFile(caminho)
+    compativeis = []
+    for aba in xls.sheet_names:
+        colunas_aba = pd.read_excel(xls, sheet_name=aba, nrows=0).columns
+        if any(c in mapa_colunas for c in colunas_aba):
+            compativeis.append(aba)
+    return compativeis
+
+
+def importar_arquivo(arquivo, caminho, abas=None):
+    """
+    abas: lista das abas a importar (deve vir de listar_abas_compativeis).
+    Se None, usa todas as abas do arquivo que baterem com o formato esperado.
+    """
     config = TABELA_CONFIG.get(arquivo)
     if config is None:
         raise ValueError(
@@ -254,8 +275,12 @@ def importar_arquivo(arquivo, caminho):
     colunas = config["colunas"]
 
     xls = pd.ExcelFile(caminho)
+    abas_a_processar = abas if abas is not None else xls.sheet_names
+
     partes = []
-    for aba in xls.sheet_names:
+    for aba in abas_a_processar:
+        if aba not in xls.sheet_names:
+            raise ValueError(f"A aba '{aba}' não existe em '{caminho}'.")
         df_aba = pd.read_excel(xls, sheet_name=aba)
         colunas_presentes = [c for c in df_aba.columns if c in mapa_colunas]
         if not colunas_presentes:
@@ -265,7 +290,7 @@ def importar_arquivo(arquivo, caminho):
 
     if not partes:
         raise ValueError(
-            f"Nenhuma aba de '{caminho}' bate com o formato esperado de '{arquivo}'."
+            f"Nenhuma das abas selecionadas de '{caminho}' bate com o formato esperado de '{arquivo}'."
         )
 
     df = pd.concat(partes, ignore_index=True)

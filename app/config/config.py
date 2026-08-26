@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
  # tabelas que serao ultilizadas
@@ -6,8 +7,14 @@ TABELAS = ["COBRANÇA", "PROJEÇÃO"]
  # nome do banc de dados
 BANCO_DADOS_NAME = "RECEBIMENTOS_DESPESAS.db"
 
- # caminho completo do projeto
-PROJECT_DIR = Path(__file__).resolve().parent.parent
+ # caminho completo do projeto - quando compilado com PyInstaller (--onefile),
+ # __file__ aponta pra pasta temporaria de extraçao (_MEI...), que e apagada
+ # ao fechar o programa; nesse caso usa a pasta do .exe (sys.executable) em vez
+ # disso, senao o banco de dados "sumiria" a cada execuçao do app compilado.
+if getattr(sys, "frozen", False):
+    PROJECT_DIR = Path(sys.executable).resolve().parent
+else:
+    PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 # conexões planilha/banco de dados

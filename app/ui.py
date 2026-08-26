@@ -82,7 +82,18 @@ class App(tk.Tk):
         erros = []
         for caminho in caminhos:
             try:
-                resultado = banco_dados.importar_arquivo(arquivo, caminho)
+                abas_disponiveis = banco_dados.listar_abas_compativeis(arquivo, caminho)
+                if not abas_disponiveis:
+                    raise ValueError(
+                        f"Nenhuma aba de '{caminho}' bate com o formato esperado de '{arquivo}'."
+                    )
+                if len(abas_disponiveis) > 1:
+                    abas_escolhidas = self._escolher_abas(caminho, abas_disponiveis)
+                    if not abas_escolhidas:
+                        continue  # cancelado ou nenhuma aba marcada
+                else:
+                    abas_escolhidas = abas_disponiveis
+                resultado = banco_dados.importar_arquivo(arquivo, caminho, abas=abas_escolhidas)
             except Exception as erro:
                 erros.append(f"{caminho}:\n{erro}")
                 continue
@@ -107,6 +118,42 @@ class App(tk.Tk):
                 foreground="black",
             )
             self._atualizar_label_data_atualizada()
+
+    def _escolher_abas(self, caminho, abas_disponiveis):
+        """Mostra um diálogo com uma checkbox por aba compatível e devolve as marcadas (ou [] se cancelado)."""
+        janela = tk.Toplevel(self)
+        janela.title(f"Selecionar abas - {os.path.basename(caminho)}")
+        janela.transient(self)
+        janela.grab_set()
+        janela.resizable(False, False)
+
+        ttk.Label(janela, text="Escolha quais abas importar deste arquivo:").pack(
+            anchor="w", padx=10, pady=(10, 5)
+        )
+
+        variaveis = {}
+        for aba in abas_disponiveis:
+            var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(janela, text=aba, variable=var).pack(anchor="w", padx=20)
+            variaveis[aba] = var
+
+        resultado = []
+
+        def confirmar():
+            resultado.extend(aba for aba, var in variaveis.items() if var.get())
+            janela.destroy()
+
+        def cancelar():
+            janela.destroy()
+
+        moldura_botoes = ttk.Frame(janela)
+        moldura_botoes.pack(fill="x", padx=10, pady=10)
+        ttk.Button(moldura_botoes, text="Cancelar", command=cancelar).pack(side="right", padx=(5, 0))
+        ttk.Button(moldura_botoes, text="Importar", command=confirmar).pack(side="right")
+
+        janela.protocol("WM_DELETE_WINDOW", cancelar)
+        janela.wait_window()
+        return resultado
 
     # =================================================
     #           SELEÇÃO DE PERIODO

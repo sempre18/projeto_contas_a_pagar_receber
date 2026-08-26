@@ -13,3 +13,8 @@ update_config.json
 
 # planilhas geradas na hora de testar
 teste_*.xlsx
+
+# build do PyInstaller
+build/
+dist/
+*.spec
